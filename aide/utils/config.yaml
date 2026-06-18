@@ -27,7 +27,7 @@ exec:
 generate_report: True
 # LLM settings for final report from journal
 report:
-  model: gpt-4.1
+  model: gpt-5.2 # gpt-4.1
   temp: 1.0
 
 # agent hyperparams
@@ -43,12 +43,12 @@ agent:
 
   # LLM settings for coding
   code:
-    model: o4-mini
+    model: gpt-5.2 # o4-mini
     temp: 0.5
 
   # LLM settings for evaluating program output / tracebacks
   feedback:
-    model: gpt-4.1-mini
+    model: gpt-5.2 # gpt-4.1-mini
     temp: 0.5
 
   # hyperparameters for the tree search
@@ -56,3 +56,12 @@ agent:
     max_debug_depth: 3
     debug_prob: 0.5
     num_drafts: 5
+    policy_kind: heuristic
+    policy_model: null
+    policy_temp: 0.7
+    policy_max_obs_nodes: 32
+    controller_kind: none
+    controller_model: null
+    controller_temp: 0.7
+    hint_max_chars: 600
+    hint_pool_path: null

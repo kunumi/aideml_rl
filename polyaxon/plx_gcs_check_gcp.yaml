@@ -1,0 +1,58 @@
+version: 1.1
+kind: component
+name: aide-gcs-check
+description: >
+  Smoke-test GCS access from Polyaxon (same credentials path as heuristic runs).
+
+inputs:
+  - name: bucket
+    type: str
+    isOptional: true
+    value: benchmark-public-data
+
+  - name: prefix
+    type: str
+    isOptional: true
+    value: aide-runs
+
+  - name: project
+    type: str
+    isOptional: true
+    value: numi-platform
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+mount:
+  - "scripts:uploads/scripts"
+  - "pyproject.toml:uploads/pyproject.toml"
+  - "setup.py:uploads/setup.py"
+  - "requirements.txt:uploads/requirements.txt"
+
+run:
+  kind: job
+
+  connections: [gcs-artifacts]
+
+  container:
+    image: "python:3.11-slim"
+
+    workingDir: "{{ globals.run_artifacts_path }}/uploads/"
+
+    command:
+      - sh
+      - "-c"
+      - >
+        set -euo pipefail
+        && echo "=== GCS-related env ==="
+        && env | sort | grep -E '^(GC_|GOOGLE_)' || true
+        && echo "=== /plx-context ==="
+        && (ls -laR /plx-context 2>/dev/null || echo "(empty or not mounted)")
+        && pip install -q google-cloud-storage
+        && python scripts/check_gcs_connection.py
+        --project "{{ project }}"
+        --bucket "{{ bucket }}"
+        --prefix "{{ prefix }}"

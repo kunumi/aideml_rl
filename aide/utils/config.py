@@ -1,5 +1,9 @@
 """configuration and setup utils"""
 
+from ..env_loader import load_dotenv_early
+
+load_dotenv_early()
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Hashable, cast
@@ -37,6 +41,15 @@ class SearchConfig:
     max_debug_depth: int
     debug_prob: float
     num_drafts: int
+    policy_kind: str
+    policy_model: str | None
+    policy_temp: float
+    policy_max_obs_nodes: int
+    controller_kind: str
+    controller_model: str | None
+    controller_temp: float
+    hint_max_chars: int
+    hint_pool_path: str | None
 
 
 @dataclass
@@ -194,6 +207,8 @@ def save_run(cfg: Config, journal):
     # create the tree + code visualization
     tree_export.generate(cfg, journal, cfg.log_dir / "tree_plot.html")
     # save the best found solution
-    best_node = journal.get_best_node(only_good=False)
-    with open(cfg.log_dir / "best_solution.py", "w") as f:
-        f.write(best_node.code)
+    if journal.nodes:
+        best_node = journal.get_best_node(only_good=False)
+        if best_node is not None:
+            with open(cfg.log_dir / "best_solution.py", "w") as f:
+                f.write(best_node.code)

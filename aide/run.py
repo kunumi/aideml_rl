@@ -8,6 +8,14 @@ from .agent import Agent
 from .interpreter import Interpreter
 from .journal import Journal, Node
 from .journal2report import journal2report
+from .policy import (
+    ControllerPolicy,
+    ExternalPolicy,
+    HeuristicPolicy,
+    HeuristicPlusControllerPolicy,
+    LLMPolicy,
+    SearchPolicy,
+)
 from omegaconf import OmegaConf
 from rich.columns import Columns
 from rich.console import Group
@@ -54,6 +62,21 @@ def journal_to_rich_tree(journal: Journal):
 
 
 def run():
+    def build_policy() -> SearchPolicy:
+        kind = cfg.agent.search.policy_kind
+        controller_kind = cfg.agent.search.controller_kind
+        if kind == "heuristic":
+            if controller_kind != "none":
+                return HeuristicPlusControllerPolicy()
+            return HeuristicPolicy()
+        if kind == "controller":
+            return ControllerPolicy()
+        if kind == "llm":
+            return LLMPolicy()
+        if kind == "external":
+            return ExternalPolicy()
+        raise ValueError(f"Unknown agent.search.policy_kind: {kind}")
+
     cfg = load_cfg()
     logger.info(f'Starting run "{cfg.exp_name}"')
 
@@ -74,6 +97,7 @@ def run():
         task_desc=task_desc,
         cfg=cfg,
         journal=journal,
+        policy=build_policy(),
     )
     interpreter = Interpreter(
         cfg.workspace_dir,

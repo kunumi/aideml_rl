@@ -1,0 +1,23 @@
+# Single-turn GRPO with verifier-only reward (no live AIDE / no agent_func).
+#
+# Point `pretrain` at your SFT checkpoint directory after Stage A.
+# Reward function: aide.rlhf.grpo_reward_entrypoint.reward_func
+
+pretrain: checkpoints/aide_search_sft
+
+dataset: data/grpo_prompts.jsonl
+input_key: messages
+apply_chat_template: true
+
+train:
+  algorithm: grpo
+  reward_func_path: aide/rlhf/grpo_reward_entrypoint.py
+  async_enable: true
+
+max_epochs: 1
+learning_rate: 1.0e-6
+batch_size: 1
+micro_train_batch_size: 1
+max_len: 8192
+
+output_dir: checkpoints/aide_search_grpo

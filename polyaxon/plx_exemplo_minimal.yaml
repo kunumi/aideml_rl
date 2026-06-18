@@ -1,0 +1,40 @@
+version: 1.1
+kind: component
+name: hello-polyaxon
+description: Exemplo mínimo para entender a estrutura básica de um YAML do Polyaxon.
+queue: axia/default
+
+# inputs: parâmetros que você pode passar ao rodar o job.
+# Podem ser obrigatórios (sem isOptional) ou opcionais (com isOptional: true e um value padrão).
+inputs:
+  - name: mensagem
+    description: Mensagem a ser impressa pelo job.
+    type: str
+    isOptional: true
+    value: "mundo"
+
+run:
+  kind: job  # tipo mais comum: um container que roda e termina
+
+  container:
+    image: python:3.11-slim  # qualquer imagem Docker pública ou privada
+
+    # command: o que vai ser executado dentro do container.
+    # Use sh -c para poder encadear comandos com && ou usar variáveis.
+    command:
+      - sh
+      - "-c"
+      - >
+        echo "Olá, {{ mensagem }}! Job rodando no Polyaxon."
+        && echo "Run UUID: {{ globals.run_uuid }}"
+        && echo "=== runtime ==="
+        && echo "hostname: $(hostname)"
+        && echo "cpus (nproc): $(nproc)"
+        && echo "cpus (/proc/cpuinfo): $(grep -c ^processor /proc/cpuinfo)"
+        && echo "=== gpu (nvidia-smi) ==="
+        && (command -v nvidia-smi >/dev/null 2>&1
+        && nvidia-smi -L
+        && nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader
+        || echo "gpus: none (nvidia-smi not available)")
+        && echo "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-not set}"
+        && echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-not set}"

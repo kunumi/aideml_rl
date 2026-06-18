@@ -154,14 +154,25 @@ if __name__ == '__main__':
 
 ## Power‑User Extras
 
+### OpenAI-compatible endpoints (Azure OpenAI / `.env`)
+
+Place a `.env` file in the project root so AIDE can load defaults before any requests:
+
+```
+OPENAI_API_KEY=your_key
+OPENAI_BASE_URL=https://your-resource.openai.azure.com/openai/v1/
+```
+
+`OPENAI_API_KEY` is read from `AZURE_OPENAI_API_KEY` as well if unset. Quotes around `OPENAI_BASE_URL` from `.env` are stripped automatically.
+
+When `OPENAI_BASE_URL` is set, the OpenAI backend uses Chat Completions (Azure-compatible gateways), not the hosted Responses API. Use your deployed model identifier for `agent.code.model`, `agent.feedback.model`, etc. (for example `gpt-5.2`).
+
 ### Local LLM (Ollama example)
 
 ```bash
 export OPENAI_BASE_URL="http://localhost:11434/v1"
 aide agent.code.model="qwen2.5" data_dir=… goal=… eval=…
 ```
-
-Note: evaluator defaults to gpt‑4o.
 
 ### Fully local (code + evaluator — no external calls)
 ```
@@ -189,6 +200,59 @@ docker run -it --rm \
 git clone https://github.com/WecoAI/aideml.git
 cd aideml && pip install -e .
 ```
+
+## RLHF / offline learned search policy (OpenRLHF)
+
+The default path is **offline**: collect heuristic AIDE runs, build a decision dataset with subtree-best rewards, **SFT**-imitate the heuristic, then **single-turn GRPO** with a **verifier-only** reward (no live AIDE during RL).
+
+### 1) Batch heuristic runs (CTU)
+
+```bash
+python scripts/batch_run_heuristic.py \
+  --csv_path data/ctu_datasets_info.csv \
+  --max_tasks 10 --seeds_per_task 2 --steps 20 \
+  --data_source hf --upload_hf \
+  --out_logs_dir data/heuristic_runs/logs \
+  --out_workspace_dir data/heuristic_runs/workspaces \
+  --runs_index data/heuristic_runs_index.csv
+```
+
+Upload CTU parquet tables to Hugging Face once: `python scripts/upload_ctu_to_hf.py` (repo: `guilhermedrud/ctu_datasets/data/`).
+
+**Polyaxon:** see [polyaxon/AIDE_HEURISTIC.md](polyaxon/AIDE_HEURISTIC.md). Jobs download from HF `data/<task>/` and upload logs to `runs/<task>/seed<N>/`.
+
+### 2) Build `offline_decisions.jsonl` (one row per heuristic step)
+
+```bash
+python scripts/export_rlhf_data.py \
+  --logs_dir data/heuristic_runs/logs \
+  --out data/offline_decisions.jsonl \
+  --ctu_csv data/ctu_datasets_info.csv
+```
+
+### 3) SFT (Stage A)
+
+```bash
+python scripts/prepare_sft_data.py --in_path data/offline_decisions.jsonl --out_path data/sft.jsonl
+bash scripts/openrlhf/train_sft.sh
+```
+
+### 4) GRPO single-turn + verifier (Stage B)
+
+```bash
+python scripts/prepare_grpo_data.py --in_path data/offline_decisions.jsonl --out_path data/grpo_prompts.jsonl
+bash scripts/openrlhf/train_grpo_singleturn.sh
+```
+
+Verifier semantics (`aide/rlhf/grpo_verifier.py`): reward = logged **R_t** iff the sampled action matches the logged heuristic action **and** passes `validate_action`; **0** if valid but different; **-1** if invalid JSON or invalid action.
+
+### 5) Evaluate a learned LLM policy on CTU
+
+```bash
+python scripts/evaluate_policy_offline.py --policy_kind llm --policy_model <your_model_id>
+```
+
+Legacy online multi-turn configs live under `configs/openrlhf/legacy/` and `scripts/openrlhf/legacy/`.
 
 # Citation
 

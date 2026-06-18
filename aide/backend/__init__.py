@@ -1,3 +1,7 @@
+from ..env_loader import load_dotenv_early
+
+load_dotenv_early()
+
 from . import backend_anthropic, backend_openai, backend_openrouter, backend_gemini
 from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
 import re
