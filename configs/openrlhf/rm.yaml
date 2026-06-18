@@ -1,0 +1,8 @@
+reward_model:
+  model_name_or_path: Qwen/Qwen3-4B-Thinking-2507
+
+data:
+  input_key: messages
+  apply_chat_template: true
+  dataset: data/rlhf_sft.jsonl
+

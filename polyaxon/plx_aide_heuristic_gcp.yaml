@@ -1,0 +1,122 @@
+version: 1.1
+kind: component
+name: aide-heuristic-run
+description: >
+  One AIDE heuristic run (CTU task × seed). Downloads CTU parquet tables from
+  Hugging Face and uploads experiment logs to guilhermedrud/ctu_datasets/runs/.
+
+inputs:
+  - name: task_index
+    description: Index into data/ctu_datasets_info.csv (0-based, after task_offset).
+    type: int
+
+  - name: seed
+    description: Random seed for this run, or "auto" to use the next unused seed on HF.
+    type: str
+    isOptional: true
+    value: auto
+
+  - name: task_offset
+    description: Skip first N rows of the CTU CSV (for sharded sweeps).
+    type: int
+    isOptional: true
+    value: 0
+
+  - name: steps
+    description: AIDE search steps per run.
+    type: int
+    isOptional: true
+    value: 35
+
+  - name: csv_path
+    description: Task index CSV (CTU or Kaggle).
+    type: str
+    isOptional: true
+    value: data/ctu_datasets_info.csv
+
+  - name: hf_repo
+    description: Hugging Face dataset repo for CTU data and run logs.
+    type: str
+    isOptional: true
+    value: guilhermedrud/ctu_datasets
+
+  - name: hf_revision
+    type: str
+    isOptional: true
+    value: main
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+run:
+  kind: job
+
+  container:
+    image: "python:3.11-slim"
+
+    resources:
+      requests:
+        cpu: "4"
+        memory: "8Gi"
+      limits:
+        cpu: "4"
+        memory: "16Gi"
+
+    env:
+      - name: PYTHONUNBUFFERED
+        value: "1"
+
+    workingDir: "{{ globals.run_artifacts_path }}/uploads/"
+
+    command:
+      - sh
+      - "-c"
+      - >
+        set -euo pipefail
+        && echo "=== runtime ==="
+        && echo "hostname: $(hostname)"
+        && echo "cpus (nproc): $(nproc)"
+        && echo "cpus (/proc/cpuinfo): $(grep -c ^processor /proc/cpuinfo)"
+        && echo "=== gpu (nvidia-smi) ==="
+        && (command -v nvidia-smi >/dev/null 2>&1
+        && nvidia-smi -L
+        && nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader
+        || echo "gpus: none (nvidia-smi not available)")
+        && echo "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-not set}"
+        && echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-not set}"
+        && pip install -q -e . huggingface_hub pyarrow pandas python-dotenv
+        && pip install -q -r requirements.txt
+        && python -c "import os; print('cpus (python os.cpu_count):', os.cpu_count())"
+        && (python -c "import torch; print('torch cuda available:', torch.cuda.is_available()); n=torch.cuda.device_count(); print('torch cuda device count:', n); [print('  gpu %d:'%i, torch.cuda.get_device_name(i)) for i in range(n)]" || echo "torch gpu check failed")
+        && echo "all requirements installed, running batch_run_heuristic.py with arguments:"
+        && echo "csv_path: {{ csv_path }}"
+        && echo "task_index: {{ task_index }}"
+        && echo "task_offset: {{ task_offset }}"
+        && echo "seed: {{ seed }}"
+        && echo "steps: {{ steps }}"
+        && echo "data_source: hf"
+        && echo "hf_repo: {{ hf_repo }}"
+        && echo "hf_revision: {{ hf_revision }}"
+        && echo "out_logs_dir: {{ globals.run_outputs_path }}/logs"
+        && echo "out_workspace_dir: {{ globals.run_outputs_path }}/workspaces"
+        && echo "materialize_root: {{ globals.run_outputs_path }}/ctu_materialized"
+        && echo "runs_index: {{ globals.run_outputs_path }}/runs_index.csv"
+        && echo "upload_hf: true"
+        && python scripts/batch_run_heuristic.py
+        --csv_path {{ csv_path }}
+        --task_index {{ task_index }}
+        --task_offset {{ task_offset }}
+        --seed "{{ seed }}"
+        --steps {{ steps }}
+        --data_source hf
+        --hf_repo "{{ hf_repo }}"
+        --hf_revision "{{ hf_revision }}"
+        --out_logs_dir "{{ globals.run_outputs_path }}/logs"
+        --out_workspace_dir "{{ globals.run_outputs_path }}/workspaces"
+        --materialize_root "{{ globals.run_outputs_path }}/ctu_materialized"
+        --runs_index "{{ globals.run_outputs_path }}/runs_index.csv"
+        --upload_hf
+      # Set HF_TOKEN (write) and OPENAI_API_KEY on the Polyaxon project.

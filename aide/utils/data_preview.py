@@ -108,6 +108,42 @@ def preview_csv(p: Path, file_name: str, simple=True) -> str:
     return "\n".join(out)
 
 
+def preview_parquet(p: Path, file_name: str, simple=True) -> str:
+    """Generate a textual preview of a parquet file."""
+    df = pd.read_parquet(p)
+    out = [f"-> {file_name} has {df.shape[0]} rows and {df.shape[1]} columns."]
+    if simple:
+        cols = df.columns.tolist()
+        sel_cols = 15
+        cols_str = ", ".join(cols[:sel_cols])
+        res = f"The columns are: {cols_str}"
+        if len(cols) > sel_cols:
+            res += f"... and {len(cols) - sel_cols} more columns"
+        out.append(res)
+    else:
+        out.append("Here is some information about the columns:")
+        for col in sorted(df.columns):
+            dtype = df[col].dtype
+            name = f"{col} ({dtype})"
+            nan_count = df[col].isnull().sum()
+            if dtype == "bool":
+                v = df[col][df[col].notnull()].mean()
+                out.append(f"{name} is {v * 100:.2f}% True, {100 - v * 100:.2f}% False")
+            elif df[col].nunique() < 10:
+                out.append(
+                    f"{name} has {df[col].nunique()} unique values: {df[col].unique().tolist()}"
+                )
+            elif is_numeric_dtype(df[col]):
+                out.append(
+                    f"{name} has range: {df[col].min():.2f} - {df[col].max():.2f}, {nan_count} nan values"
+                )
+            elif dtype == "object":
+                out.append(
+                    f"{name} has {df[col].nunique()} unique values. Some example values: {df[col].value_counts().head(4).index.tolist()}"
+                )
+    return "\n".join(out)
+
+
 def preview_json(p: Path, file_name: str):
     """Generate a textual preview of a json file using a generated json schema"""
     builder = SchemaBuilder()
@@ -132,6 +168,8 @@ def generate(base_path, include_file_details=True, simple=False):
 
             if fn.suffix == ".csv":
                 out.append(preview_csv(fn, file_name, simple=simple))
+            elif fn.suffix == ".parquet":
+                out.append(preview_parquet(fn, file_name, simple=simple))
             elif fn.suffix == ".json":
                 out.append(preview_json(fn, file_name))
             elif fn.suffix in plaintext_files:

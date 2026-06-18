@@ -1,0 +1,83 @@
+version: 1.1
+kind: component
+name: training-nebius
+description: Exemplo de job de treinamento rodando no Nebius com GPU H200.
+
+# queue: define em qual cluster o job vai rodar.
+# "nebius/default" direciona para o cluster Nebius.
+# No GCP não é necessário definir queue (é o padrão).
+queue: nebius/default
+
+inputs:
+  - name: train_pairs
+    description: Pares "dataset,task" separados por ponto-e-vírgula para treino.
+    type: str
+
+  - name: eval_pairs
+    description: Pares "dataset,task" separados por ponto-e-vírgula para avaliação.
+    type: str
+
+  - name: lr
+    description: Learning rate do otimizador.
+    type: float
+    isOptional: true
+
+  - name: epochs
+    description: Número de épocas de treinamento.
+    type: int
+    isOptional: true
+    value: 10
+
+  - name: wandb_project
+    description: Nome do projeto no W&B para registrar os experimentos.
+    type: str
+    isOptional: true
+    value: meu-projeto
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+run:
+  kind: job
+
+  connections: [gcs-artifacts, docker-connection, wandb-connection]
+
+  environment:
+    nodeSelector:
+      polyaxon: h200
+
+    # imagePullSecrets: credencial para baixar imagens do registry privado do Nebius.
+    # No GCP isso não é necessário pois o cluster já tem acesso ao registry GCP.
+    imagePullSecrets: ["docker-nebius-conf"]
+
+  container:
+    # Imagem no registry privado do Nebius (diferente do GCP)
+    image: "cr.us-central1.nebius.cloud/u00fa0w6fr7qe1zq5p/kspace:base_1"
+
+    workingDir: "{{ globals.run_artifacts_path }}/uploads/src"
+
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+
+    env:
+      - name: GOOGLE_APPLICATION_CREDENTIALS
+        value: /plx-context/.gc/gc-secret.json
+      - name: TEAM_WANDB
+        value: franciscokunumi-universidade-federal-de-minas-gerais
+      - name: WANDB_PROJECT
+        value: "{{ wandb_project }}"
+
+    command:
+      - sh
+      - "-c"
+      - >
+        python main.py
+        --train_pairs "{{ train_pairs }}"
+        --eval_pairs "{{ eval_pairs }}"
+        {% if lr is not none %}--lr {{ lr }}{% endif %}
+        {% if epochs is not none %}--epochs {{ epochs }}{% endif %}
+        --output_dir {{ globals.run_outputs_path }}

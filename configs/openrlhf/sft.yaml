@@ -1,0 +1,19 @@
+# Supervised fine-tuning for the AIDE search policy (offline decisions -> SFT JSONL).
+#
+# Many OpenRLHF versions expose `openrlhf.cli.train_sft` with slightly different flags.
+# Adjust keys below to match your installed OpenRLHF version.
+
+pretrain: Qwen/Qwen3-4B-Thinking-2507
+
+# HF dataset in JSONL form (messages list)
+dataset: data/sft.jsonl
+input_key: messages
+apply_chat_template: true
+
+max_epochs: 1
+learning_rate: 2.0e-5
+batch_size: 1
+micro_train_batch_size: 1
+max_len: 8192
+
+output_dir: checkpoints/aide_search_sft

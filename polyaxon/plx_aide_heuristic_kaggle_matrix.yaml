@@ -1,0 +1,27 @@
+version: 1.1
+kind: operation
+name: aide-heuristic-kaggle-grid
+description: >
+  Grid over Kaggle tasks (task_index). Each run uses --seed auto (next unused seed
+  on HF) and uploads logs to runs/<task_name>/seed<N>/.
+
+pathRef: plx_aide_heuristic_gcp.yaml
+
+params:
+  task_offset:
+    value: 0
+  steps:
+    value: 35
+  seed:
+    value: auto
+  csv_path:
+    value: data/kaggle_datasets_info.csv
+
+matrix:
+  kind: grid
+  concurrency: 8
+  params:
+    task_index:
+      kind: range
+      # 1211 datasets in data/kaggle_datasets_info.csv (indices 0..1210)
+      value: "0:500:1" # 1211

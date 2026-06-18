@@ -1,0 +1,18 @@
+# DPO for the AIDE hindsight controller preference pairs.
+
+pretrain: checkpoints/aide_hint_controller_sft
+
+dataset: data/heuristic_runs/hint_controller/preferences.jsonl
+prompt_key: prompt
+chosen_key: chosen
+rejected_key: rejected
+apply_chat_template: true
+
+max_epochs: 1
+learning_rate: 5.0e-7
+batch_size: 1
+micro_train_batch_size: 1
+max_len: 8192
+beta: 0.1
+
+output_dir: checkpoints/aide_hint_controller_dpo

@@ -6,6 +6,7 @@ import humanize
 from .backend import FunctionSpec, query
 from .interpreter import ExecutionResult
 from .journal import Journal, Node
+from .policy import HeuristicPolicy, SearchAction, SearchPolicy
 from .utils import data_preview
 from .utils.config import Config
 from .utils.metric import MetricValue, WorstMetricValue
@@ -50,6 +51,7 @@ class Agent:
         task_desc: str,
         cfg: Config,
         journal: Journal,
+        policy: SearchPolicy | None = None,
     ):
         super().__init__()
         self.task_desc = task_desc
@@ -57,39 +59,20 @@ class Agent:
         self.acfg = cfg.agent
         self.journal = journal
         self.data_preview: str | None = None
+        self.policy = policy or HeuristicPolicy()
 
     def search_policy(self) -> Node | None:
-        """Select a node to work on (or None to draft a new node)."""
-        search_cfg = self.acfg.search
-
-        # initial drafting
-        if len(self.journal.draft_nodes) < search_cfg.num_drafts:
-            logger.debug("[search policy] drafting new node (not enough drafts)")
+        """Backward-compatible wrapper around heuristic selection."""
+        action = HeuristicPolicy().select(
+            journal=self.journal,
+            task_desc=self.task_desc if isinstance(self.task_desc, str) else str(self.task_desc),
+            search_cfg=self.acfg.search,
+            step_idx=len(self.journal),
+            total_steps=self.acfg.steps,
+        )
+        if action.kind == "draft":
             return None
-
-        # debugging
-        if random.random() < search_cfg.debug_prob:
-            # nodes that are buggy + leaf nodes + debug depth < max debug depth
-            debuggable_nodes = [
-                n
-                for n in self.journal.buggy_nodes
-                if (n.is_leaf and n.debug_depth <= search_cfg.max_debug_depth)
-            ]
-            if debuggable_nodes:
-                logger.debug("[search policy] debugging")
-                return random.choice(debuggable_nodes)
-            logger.debug("[search policy] not debugging by chance")
-
-        # back to drafting if no nodes to improve
-        good_nodes = self.journal.good_nodes
-        if not good_nodes:
-            logger.debug("[search policy] drafting new node (no good nodes)")
-            return None
-
-        # greedy
-        greedy_node = self.journal.get_best_node()
-        logger.debug("[search policy] greedy node selected")
-        return greedy_node
+        return next((n for n in self.journal.nodes if n.id == action.parent_id), None)
 
     @property
     def _prompt_environment(self):
@@ -204,7 +187,18 @@ class Agent:
         plan, code = self.plan_and_code_query(prompt)
         return Node(plan=plan, code=code)
 
-    def _improve(self, parent_node: Node) -> Node:
+    def _controller_hint_block(self, hint: str | None) -> dict[str, str] | None:
+        if not hint:
+            return None
+        return {
+            "Controller hint": (
+                f"{hint}\n\n"
+                "Use this hint as strategic guidance. You may ignore it if it conflicts "
+                "with the execution output or dataset schema."
+            )
+        }
+
+    def _improve(self, parent_node: Node, hint: str | None = None) -> Node:
         prompt: Any = {
             "Introduction": (
                 "You are a Kaggle grandmaster attending a competition. You are provided with a previously developed "
@@ -219,6 +213,9 @@ class Agent:
         prompt["Previous solution"] = {
             "Code": wrap_code(parent_node.code),
         }
+        hint_block = self._controller_hint_block(hint)
+        if hint_block:
+            prompt |= hint_block
 
         prompt["Instructions"] |= self._prompt_resp_fmt
         prompt["Instructions"] |= {
@@ -238,9 +235,10 @@ class Agent:
             plan=plan,
             code=code,
             parent=parent_node,
+            hint=hint,
         )
 
-    def _debug(self, parent_node: Node) -> Node:
+    def _debug(self, parent_node: Node, hint: str | None = None) -> Node:
         prompt: Any = {
             "Introduction": (
                 "You are a Kaggle grandmaster attending a competition. "
@@ -253,6 +251,9 @@ class Agent:
             "Execution output": wrap_code(parent_node.term_out, lang=""),
             "Instructions": {},
         }
+        hint_block = self._controller_hint_block(hint)
+        if hint_block:
+            prompt |= hint_block
         prompt["Instructions"] |= self._prompt_resp_fmt
         prompt["Instructions"] |= {
             "Bugfix improvement sketch guideline": [
@@ -266,7 +267,7 @@ class Agent:
             prompt["Data Overview"] = self.data_preview
 
         plan, code = self.plan_and_code_query(prompt)
-        return Node(plan=plan, code=code, parent=parent_node)
+        return Node(plan=plan, code=code, parent=parent_node, hint=hint)
 
     def update_data_preview(
         self,
@@ -277,15 +278,28 @@ class Agent:
         if not self.journal.nodes or self.data_preview is None:
             self.update_data_preview()
 
-        parent_node = self.search_policy()
-        logger.debug(f"Agent is generating code, parent node type: {type(parent_node)}")
+        action: SearchAction = self.policy.select(
+            journal=self.journal,
+            task_desc=self.task_desc if isinstance(self.task_desc, str) else str(self.task_desc),
+            search_cfg=self.acfg.search,
+            step_idx=len(self.journal),
+            total_steps=self.acfg.steps,
+        )
+        parent_node = (
+            next((n for n in self.journal.nodes if n.id == action.parent_id), None)
+            if action.parent_id is not None
+            else None
+        )
+        logger.debug("Agent is generating code, action=%s", action.kind)
 
-        if parent_node is None:
+        hint = action.hint
+
+        if action.kind == "draft" or parent_node is None:
             result_node = self._draft()
-        elif parent_node.is_buggy:
-            result_node = self._debug(parent_node)
+        elif action.kind == "debug":
+            result_node = self._debug(parent_node, hint=hint)
         else:
-            result_node = self._improve(parent_node)
+            result_node = self._improve(parent_node, hint=hint)
 
         self.parse_exec_result(
             node=result_node,

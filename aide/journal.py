@@ -48,6 +48,9 @@ class Node(DataClassJsonMixin):
     # -> always True if exc_type is not None or no valid metric
     is_buggy: bool = field(default=None, kw_only=True)  # type: ignore
 
+    # controller hint used when generating this node (if any)
+    hint: str | None = field(default=None, kw_only=True)
+
     def __post_init__(self) -> None:
         if self.parent is not None:
             self.parent.children.add(self)
@@ -99,6 +102,18 @@ class Node(DataClassJsonMixin):
         if self.stage_name != "debug":
             return 0
         return self.parent.debug_depth + 1  # type: ignore
+
+    def summary_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "parent_id": self.parent.id if self.parent else None,
+            "stage": self.stage_name,
+            "is_buggy": self.is_buggy,
+            "metric_value": self.metric.value if self.metric is not None else None,
+            "debug_depth": self.debug_depth,
+            "is_leaf": self.is_leaf,
+            "plan_excerpt": (self.plan or "")[:200],
+        }
 
 
 @dataclass
@@ -190,3 +205,7 @@ class Journal(DataClassJsonMixin):
             summary_part += f"Validation Metric: {n.metric.value}\n"
             summary.append(summary_part)
         return "\n-------------------------------\n".join(summary)
+
+    def summary_for_policy(self, max_nodes: int = 32) -> list[dict]:
+        nodes = self.nodes[-max_nodes:]
+        return [n.summary_dict() for n in nodes]

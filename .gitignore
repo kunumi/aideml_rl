@@ -168,3 +168,9 @@ logs
 
 .gradio/
 .ruff_cache/
+
+configs/gcs/gcs_key.json
+data/heuristic_runs/
+data/kaggle_materialized/
+data/kaggle_raw/
+data/openrlhf_smoke/

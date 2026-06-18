@@ -1,0 +1,37 @@
+[project]
+name = "aideml"
+version = "0.1.0"
+description = "AIDE ML with RLHF search policy tooling"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "coolname",
+    "dataclasses-json",
+    "humanize",
+    "numpy",
+    "omegaconf",
+    "openai",
+    "pandas",
+    "python-dotenv",
+    "rich",
+    "shutup",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+hf = [
+    "huggingface_hub",
+    "pyarrow",
+]
+gcs = [
+    "google-cloud-storage",
+]
+rlhf = [
+    "openrlhf",
+    "ray",
+    "redelex",
+    "relbench",
+    "torch",
+    "transformers",
+    "vllm",
+]

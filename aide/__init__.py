@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from .agent import Agent
 from .interpreter import Interpreter
 from .journal import Journal
+from .policy import ExternalPolicy, HeuristicPolicy, LLMPolicy, SearchPolicy
 from omegaconf import OmegaConf
 from rich.status import Status
 from .utils.config import (
@@ -42,15 +43,27 @@ class Experiment:
             prep_agent_workspace(self.cfg)
 
         self.journal = Journal()
+        self.policy = self._build_policy()
         self.agent = Agent(
             task_desc=self.task_desc,
             cfg=self.cfg,
             journal=self.journal,
+            policy=self.policy,
         )
         self.interpreter = Interpreter(
             self.cfg.workspace_dir,
             **OmegaConf.to_container(self.cfg.exec),  # type: ignore
         )
+
+    def _build_policy(self) -> SearchPolicy:
+        kind = self.cfg.agent.search.policy_kind
+        if kind == "heuristic":
+            return HeuristicPolicy()
+        if kind == "llm":
+            return LLMPolicy()
+        if kind == "external":
+            return ExternalPolicy()
+        raise ValueError(f"Unknown agent.search.policy_kind: {kind}")
 
     def run(self, steps: int) -> Solution:
         for _i in range(steps):

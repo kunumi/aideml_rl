@@ -1,0 +1,79 @@
+version: 1.1
+kind: component
+name: openrlhf-smoke-axia
+description: >
+  GPU smoke test for the AIDE OpenRLHF stack on axia/default.
+  Checks CUDA, installs OpenRLHF+vLLM, starts Ray on 127.0.0.1 (not 0.0.0.0),
+  runs a tiny SFT job and a minimal single-GPU GRPO job with the verifier reward.
+
+queue: axia/default
+
+inputs:
+  - name: mode
+    description: "gpu | venv | check | sft | grpo | all"
+    type: str
+    isOptional: true
+    value: gpu
+
+  - name: smoke_model
+    description: Small HF model for the smoke run (keeps download/time reasonable).
+    type: str
+    isOptional: true
+    value: Qwen/Qwen2.5-0.5B-Instruct
+
+  - name: num_gpus
+    description: GPUs to request and pass to Ray (--num-gpus).
+    type: int
+    isOptional: true
+    value: 1
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+run:
+  kind: job
+  connections:
+      - local-scratch
+
+  container:
+    image: "pytorch/pytorch:2.11.0-cuda12.6-cudnn9-devel"
+    #image: "tlatjddnd101/openrlhf:latest"
+
+    workingDir: "{{ globals.artifacts_path }}/{{ globals.uuid }}/uploads"
+
+    resources:
+      requests:
+        cpu: "8"
+        memory: "32Gi"
+      limits:
+        cpu: "16"
+        memory: "64Gi"
+        nvidia.com/gpu: "1"
+
+    env:
+      - name: PYTHONUNBUFFERED
+        value: "1"
+      - name: MODE
+        value: "{{ mode }}"
+      - name: SMOKE_MODEL
+        value: "{{ smoke_model }}"
+      - name: NUM_GPUS
+        value: "{{ num_gpus }}"
+      - name: OUTPUT_DIR
+        value: "{{ globals.run_outputs_path }}/openrlhf_smoke"
+      - name: HF_HOME
+        value: "{{ globals.run_outputs_path }}/hf_cache"
+      - name: RAY_IP
+        value: "127.0.0.1"
+      - name: INSTALL_OPENRLHF
+        value: "1"
+      - name: VENV_DIR
+        value: "/tmp/aide-openrlhf-venv"
+      # Set HF_TOKEN on the Polyaxon project for model downloads.
+
+    command:
+      - bash
+      - scripts/openrlhf/smoke_test.sh

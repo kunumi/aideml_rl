@@ -1,0 +1,14 @@
+# Minimal SFT config for OpenRLHF smoke tests (1 GPU, tiny model).
+
+pretrain: Qwen/Qwen2.5-0.5B-Instruct
+dataset: data/openrlhf_smoke/sft.jsonl
+input_key: messages
+apply_chat_template: true
+
+max_epochs: 1
+learning_rate: 2.0e-5
+batch_size: 1
+micro_train_batch_size: 1
+max_len: 512
+
+output_dir: checkpoints/openrlhf_smoke_sft

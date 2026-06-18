@@ -1,0 +1,48 @@
+version: 1.1
+kind: component
+name: aide-hf-check
+description: Smoke-test read/write access to guilhermedrud/ctu_datasets on Hugging Face.
+
+inputs:
+  - name: hf_repo
+    type: str
+    isOptional: true
+    value: guilhermedrud/ctu_datasets
+
+  - name: hf_revision
+    type: str
+    isOptional: true
+    value: main
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+mount:
+  - "scripts:uploads/scripts"
+  - "data/hf_utils.py:uploads/data/hf_utils.py"
+  - "pyproject.toml:uploads/pyproject.toml"
+  - "setup.py:uploads/setup.py"
+  - "requirements.txt:uploads/requirements.txt"
+
+run:
+  kind: job
+
+  container:
+    image: "python:3.11-slim"
+
+    workingDir: "{{ globals.run_artifacts_path }}/uploads/"
+
+    command:
+      - sh
+      - "-c"
+      - >
+        set -euo pipefail
+        && pip install -q huggingface_hub
+        && pip install -q -e . pyarrow pandas python-dotenv
+        && pip install -r requirements.txt
+        && python scripts/check_hf_connection.py
+        --hf_repo "{{ hf_repo }}"
+        --hf_revision "{{ hf_revision }}"

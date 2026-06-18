@@ -1,0 +1,30 @@
+version: 1.1
+# kind: operation instancia um component com parâmetros concretos.
+kind: operation
+name: ablation-lr-epochs
+
+# pathRef: referencia um component local pelo caminho do arquivo.
+pathRef: plx_exemplo_nebius.yaml
+
+# params: valores fixos que serão passados ao component referenciado.
+# Qualquer input definido no component pode ser sobrescrito aqui.
+params:
+  train_pairs:
+    value: "rel-f1,driver-dnf"
+  eval_pairs:
+    value: "rel-f1,driver-dnf"
+  wandb_project:
+    value: ablation-lr-epochs
+
+# matrix: define múltiplos runs variando parâmetros.
+# Cada combinação em "values" gera um run separado.
+matrix:
+  kind: mapping   # mapping = lista explícita de combinações (sem busca aleatória)
+  concurrency: 2  # quantos runs rodam em paralelo ao mesmo tempo
+  values:
+    - lr: 1e-4
+      epochs: 5
+    - lr: 1e-4
+      epochs: 10
+    - lr: 5e-5
+      epochs: 10

@@ -1,0 +1,11 @@
+data_dir: example_tasks/house_prices
+goal: Predict the sale price for each house.
+eval: RMSE on a validation split.
+
+agent:
+  steps: 5
+  search:
+    policy_kind: llm
+    policy_model: gpt-5.2
+    policy_temp: 0.2
+    policy_max_obs_nodes: 32

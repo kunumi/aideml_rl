@@ -1,0 +1,14 @@
+actor:
+  model_name_or_path: Qwen/Qwen3-4B-Thinking-2507
+
+train:
+  algorithm: grpo
+  agent_func_path: aide/rlhf/agent_func.py
+  async_enable: true
+  partial_rollout_enable: false
+
+data:
+  input_key: messages
+  apply_chat_template: true
+  prompt_data: data/rlhf_sft.jsonl
+
