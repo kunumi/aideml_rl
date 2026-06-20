@@ -1,0 +1,32 @@
+version: 1.1
+kind: operation
+name: aide-eval-baseline-grid
+description: >
+  Baseline AIDE eval grid (original heuristic, no DPO controller) over RelBench
+  tasks in data/eval/eval_tasks.jsonl. Uploads to eval/aide_baseline/ on HF.
+  MLE-bench rows are excluded by benchmark=relbench (need Kaggle creds + prepare).
+
+pathRef: ./plx_aide_eval_gcp.yaml
+
+params:
+  benchmark:
+    value: relbench
+  steps:
+    value: 20
+  seed:
+    value: 0
+  model_tag:
+    value: aide_baseline
+  policy_kind:
+    value: heuristic
+  controller_kind:
+    value: none
+
+matrix:
+  kind: grid
+  concurrency: 4
+  params:
+    task_index:
+      kind: range
+      # First 5 RelBench tasks in eval_tasks.jsonl (indices 0..4)
+      value: "0:5:1"

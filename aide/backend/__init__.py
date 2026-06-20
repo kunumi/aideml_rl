@@ -99,7 +99,11 @@ def query_with_usage(
         "max_tokens": max_tokens,
     }
 
-    provider = determine_provider(model)
+    base_url = model_kwargs.get("base_url")
+    if base_url:
+        provider = "openai"
+    else:
+        provider = determine_provider(model)
     query_func = provider_to_query_func[provider]
     output, req_time, in_tok_count, out_tok_count, info = query_func(
         system_message=compile_prompt_to_md(system_message) if system_message else None,

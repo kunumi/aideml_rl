@@ -30,6 +30,8 @@ eval = [
     "matplotlib",
     "relbench",
     "pyarrow",
+    "scipy>=1.14",
+    "scikit-learn>=1.5.2,<=1.6.1",
 ]
 rlhf = [
     "openrlhf",

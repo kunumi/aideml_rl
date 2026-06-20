@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from .backend import FunctionSpec, query
+from .controller_trace import log_controller_event
 from .journal import Journal, Node
 from .rlhf.observation import build_observation, task_desc_to_string
 from .utils.config import SearchConfig
@@ -250,9 +251,13 @@ class ControllerPolicy:
         step_idx: int,
         total_steps: int,
     ) -> SearchAction:
-        del step_idx, total_steps
-
         if len(journal.draft_nodes) < search_cfg.num_drafts:
+            log_controller_event(
+                "draft_phase",
+                step_idx=step_idx,
+                n_drafts=len(journal.draft_nodes),
+                num_drafts=search_cfg.num_drafts,
+            )
             return SearchAction(kind="draft")
 
         candidates = self._candidate_nodes(journal, search_cfg)

@@ -18,6 +18,7 @@ logger = logging.getLogger("aide")
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 _client: openai.OpenAI = None  # type: ignore
+_override_clients: dict[tuple[str, str | None], openai.OpenAI] = {}
 
 OPENAI_TIMEOUT_EXCEPTIONS = (
     openai.RateLimitError,
@@ -54,22 +55,48 @@ def _ensure_openai_client():
     _client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
 
 
+def _client_for_request(
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> tuple[openai.OpenAI, bool]:
+    """
+    Return (client, use_chat_api).
+
+    When base_url is set (e.g. vLLM for the controller), use a dedicated client
+    and Chat Completions. Otherwise use the global singleton and global routing.
+    """
+    if base_url:
+        key = base_url.rstrip("/")
+        cache_key = (key, api_key)
+        if cache_key not in _override_clients:
+            _override_clients[cache_key] = openai.OpenAI(
+                api_key=api_key or _resolve_api_key() or "dummy",
+                base_url=key,
+                max_retries=0,
+            )
+        return _override_clients[cache_key], True
+    _ensure_openai_client()
+    return _client, bool(_resolve_openai_base_url())
+
+
 def query(
     system_message: str | None,
     user_message: str | None,
     func_spec: FunctionSpec | None = None,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
     **model_kwargs,
 ) -> tuple[OutputType, float, int, int, dict]:
     """
     Query the OpenAI API, optionally with function calling.
     If the model doesn't support function calling, gracefully degrade to text generation.
     """
-    _ensure_openai_client()
+    client, use_chat_api = _client_for_request(base_url, api_key)
 
     filtered_kwargs: dict = select_values(notnone, model_kwargs)
-
-    # When OPENAI_BASE_URL is set → Chat Completions (Azure OAI / OpenAI-compatible), not Responses API.
-    use_chat_api = bool(_resolve_openai_base_url())
+    filtered_kwargs.pop("base_url", None)
+    filtered_kwargs.pop("api_key", None)
 
     if not use_chat_api:
         if "max_tokens" in filtered_kwargs:
@@ -103,14 +130,14 @@ def query(
     try:
         if use_chat_api:
             response = backoff_create(
-                _client.chat.completions.create,
+                client.chat.completions.create,
                 OPENAI_TIMEOUT_EXCEPTIONS,
                 messages=messages,
                 **filtered_kwargs,
             )
         else:
             response = backoff_create(
-                _client.responses.create,
+                client.responses.create,
                 OPENAI_TIMEOUT_EXCEPTIONS,
                 input=messages,
                 **filtered_kwargs,
@@ -126,14 +153,14 @@ def query(
 
             if use_chat_api:
                 response = backoff_create(
-                    _client.chat.completions.create,
+                    client.chat.completions.create,
                     OPENAI_TIMEOUT_EXCEPTIONS,
                     messages=messages,
                     **filtered_kwargs,
                 )
             else:
                 response = backoff_create(
-                    _client.responses.create,
+                    client.responses.create,
                     OPENAI_TIMEOUT_EXCEPTIONS,
                     input=messages,
                     **filtered_kwargs,

@@ -177,3 +177,5 @@ data/openrlhf_smoke/
 
 checkpoints/
 wandb/
+data/eval/materialized/
+data/eval/metrics_dpo_full.json

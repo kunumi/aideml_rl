@@ -10,6 +10,7 @@ HF_REPO = "guilhermedrud/ctu_datasets"
 HF_DATA_PREFIX = "data"
 HF_RUNS_PREFIX = "runs"
 HF_KAGGLE_PREFIX = "kaggle"
+HF_EVAL_PREFIX = "eval"
 
 
 def _token(token: str | None = None) -> str | None:
@@ -175,6 +176,78 @@ def upload_aide_log_dir(
         token=token,
     )
     return f"hf://{repo_id}/{path_in_repo}/"
+
+
+def upload_model_dir(
+    local_dir: str | Path,
+    repo_id: str,
+    *,
+    private: bool = True,
+    revision: str = "main",
+    token: str | None = None,
+) -> str:
+    """Upload a local model checkpoint directory to a HF model repo."""
+    local_dir = Path(local_dir)
+    if not local_dir.is_dir():
+        raise NotADirectoryError(local_dir)
+
+    api = _api(token)
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+    api.upload_folder(
+        folder_path=str(local_dir),
+        repo_id=repo_id,
+        repo_type="model",
+        revision=revision,
+    )
+    print(f"Uploaded model {local_dir} -> hf://{repo_id}")
+    return f"hf://{repo_id}"
+
+
+def upload_eval_run_dir(
+    local_log_dir: str | Path,
+    *,
+    model_tag: str,
+    task_name: str,
+    seed: int,
+    repo_id: str = HF_REPO,
+    revision: str = "main",
+    token: str | None = None,
+) -> str:
+    """Upload one eval run log bundle to eval/<model_tag>/<task_name>/seed<seed>/."""
+    path_in_repo = _repo_path(HF_EVAL_PREFIX, model_tag, task_name, f"seed{seed}")
+    upload_folder_to_hf(
+        local_log_dir,
+        repo_id=repo_id,
+        path_in_repo=path_in_repo,
+        revision=revision,
+        token=token,
+    )
+    return f"hf://{repo_id}/{path_in_repo}/"
+
+
+def upload_eval_metrics(
+    local_json: str | Path,
+    *,
+    model_tag: str,
+    repo_id: str = HF_REPO,
+    revision: str = "main",
+    token: str | None = None,
+) -> str:
+    """Upload aggregate eval metrics JSON to eval/<model_tag>/metrics.json."""
+    local_json = Path(local_json)
+    if not local_json.is_file():
+        raise FileNotFoundError(local_json)
+    path_in_repo = _repo_path(HF_EVAL_PREFIX, model_tag, "metrics.json")
+    _api(token).upload_file(
+        path_or_fileobj=str(local_json),
+        path_in_repo=path_in_repo,
+        repo_id=repo_id,
+        repo_type="dataset",
+        revision=revision,
+    )
+    dest = f"{repo_id}/{path_in_repo}"
+    print(f"Uploaded metrics {local_json} -> hf://{dest}")
+    return f"hf://{dest}"
 
 
 def download_ctu_task_data(

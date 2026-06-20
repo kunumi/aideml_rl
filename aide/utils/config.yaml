@@ -63,5 +63,6 @@ agent:
     controller_kind: none
     controller_model: null
     controller_temp: 0.7
+    controller_base_url: null
     hint_max_chars: 600
     hint_pool_path: null

@@ -1,0 +1,112 @@
+version: 1.1
+kind: component
+name: aide-eval-run
+description: >
+  One AIDE eval run on the RelBench/MLE-bench manifest (task_index × seed).
+  Uploads logs and metrics to guilhermedrud/ctu_datasets/eval/<model_tag>/.
+
+inputs:
+  - name: task_index
+    description: Index into the filtered eval manifest (after benchmark filter).
+    type: int
+
+  - name: seed
+    description: Random seed for this eval run.
+    type: int
+    isOptional: true
+    value: 0
+
+  - name: steps
+    description: AIDE search steps per run.
+    type: int
+    isOptional: true
+    value: 20
+
+  - name: benchmark
+    description: Manifest benchmark filter (relbench, mlebench, or all).
+    type: str
+    isOptional: true
+    value: relbench
+
+  - name: model_tag
+    description: Eval variant folder on HF (e.g. aide_baseline, dpo_full, dpo_hint_only).
+    type: str
+    isOptional: true
+    value: aide_baseline
+
+  - name: policy_kind
+    type: str
+    isOptional: true
+    value: heuristic
+
+  - name: controller_kind
+    type: str
+    isOptional: true
+    value: none
+
+  - name: controller_model
+    type: str
+    isOptional: true
+    value: ""
+
+  - name: hf_repo
+    type: str
+    isOptional: true
+    value: guilhermedrud/ctu_datasets
+
+  - name: hf_revision
+    type: str
+    isOptional: true
+    value: main
+
+cache:
+  disable: true
+
+termination:
+  maxRetries: 0
+
+run:
+  kind: job
+
+  container:
+    image: "python:3.11-slim"
+
+    resources:
+      requests:
+        cpu: "4"
+        memory: "8Gi"
+      limits:
+        cpu: "4"
+        memory: "16Gi"
+
+    env:
+      - name: PYTHONUNBUFFERED
+        value: "1"
+
+    workingDir: "{{ globals.run_artifacts_path }}/uploads/"
+
+    command:
+      - sh
+      - "-c"
+      - >
+        set -euo pipefail
+        && pip install -q -e ".[eval]" huggingface_hub python-dotenv
+        && pip install -q -r requirements.txt
+        && python scripts/run_eval.py
+        --manifest data/eval/eval_tasks.jsonl
+        --benchmark {{ benchmark }}
+        --task_index {{ task_index }}
+        --seed {{ seed }}
+        --steps {{ steps }}
+        --policy_kind {{ policy_kind }}
+        --controller_kind {{ controller_kind }}
+        --model_tag {{ model_tag }}
+        --relbench_download
+        --upload_hf
+        --hf_repo "{{ hf_repo }}"
+        --hf_revision "{{ hf_revision }}"
+        --out_logs_dir "{{ globals.run_outputs_path }}/logs"
+        --out_workspace_dir "{{ globals.run_outputs_path }}/workspaces"
+        --materialize_root "{{ globals.run_outputs_path }}/materialized"
+      # Set HF_TOKEN (write) and OPENAI_API_KEY on the Polyaxon project.
+      # MLE-bench tasks require Kaggle creds and mlebench prepare; default grid is RelBench-only.

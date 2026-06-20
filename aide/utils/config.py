@@ -48,6 +48,7 @@ class SearchConfig:
     controller_kind: str
     controller_model: str | None
     controller_temp: float
+    controller_base_url: str | None
     hint_max_chars: int
     hint_pool_path: str | None
 
@@ -99,7 +100,8 @@ def _get_next_logindex(dir: Path) -> int:
     max_index = -1
     for p in dir.iterdir():
         try:
-            if current_index := int(p.name.split("-")[0]) > max_index:
+            current_index = int(p.name.split("-")[0])
+            if current_index > max_index:
                 max_index = current_index
         except ValueError:
             pass
