@@ -1,18 +1,36 @@
 # DPO for the AIDE hindsight controller preference pairs.
+# Reference config for OpenRLHF namespaced CLI flags (see scripts/openrlhf/train_hint_dpo.sh).
 
-pretrain: checkpoints/aide_hint_controller_sft
+model:
+  model_name_or_path: checkpoints/aide_hint_controller_sft
+  beta: 0.1
+  gradient_checkpointing_enable: true
 
-dataset: data/heuristic_runs/hint_controller/preferences.jsonl
-prompt_key: prompt
-chosen_key: chosen
-rejected_key: rejected
-apply_chat_template: true
+data:
+  dataset: data/heuristic_runs/hint_controller/preferences.jsonl
+  prompt_key: prompt
+  chosen_key: chosen
+  rejected_key: rejected
+  apply_chat_template: true
+  max_len: 8192
 
-max_epochs: 1
-learning_rate: 5.0e-7
-batch_size: 1
-micro_train_batch_size: 1
-max_len: 8192
-beta: 0.1
+train:
+  max_epochs: 1
+  batch_size: 16
+  micro_batch_size: 4
 
-output_dir: checkpoints/aide_hint_controller_dpo
+adam:
+  lr: 5.0e-7
+
+ckpt:
+  output_dir: checkpoints/aide_hint_controller_dpo
+
+ds:
+  zero_stage: 3
+
+logger:
+  logging_steps: 1
+  wandb:
+    key: true
+    project: aide_rl
+    run_name: hint_controller_dpo

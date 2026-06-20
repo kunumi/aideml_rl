@@ -4,11 +4,55 @@ load_dotenv_early()
 
 from . import backend_anthropic, backend_openai, backend_openrouter, backend_gemini
 from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
+import copy
 import re
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger("aide")
+
+# Module-level LLM usage accumulator (reset per eval run via reset_usage()).
+_usage_state: dict[str, Any] = {
+    "in": 0,
+    "out": 0,
+    "total": 0,
+    "n_calls": 0,
+    "calls": [],
+}
+
+
+def reset_usage() -> None:
+    """Reset the module-level LLM usage accumulator."""
+    _usage_state["in"] = 0
+    _usage_state["out"] = 0
+    _usage_state["total"] = 0
+    _usage_state["n_calls"] = 0
+    _usage_state["calls"] = []
+
+
+def get_usage() -> dict[str, Any]:
+    """Return a snapshot of accumulated LLM usage for the current run."""
+    return copy.deepcopy(_usage_state)
+
+
+def _record_usage(usage: dict[str, Any]) -> None:
+    in_tok = int(usage.get("in", 0))
+    out_tok = int(usage.get("out", 0))
+    total = int(usage.get("total", in_tok + out_tok))
+    _usage_state["in"] += in_tok
+    _usage_state["out"] += out_tok
+    _usage_state["total"] += total
+    _usage_state["n_calls"] += 1
+    _usage_state["calls"].append(
+        {
+            "model": usage.get("model"),
+            "in": in_tok,
+            "out": out_tok,
+            "total": total,
+            "call_type": usage.get("call_type"),
+        }
+    )
 
 
 def determine_provider(model: str) -> str:
@@ -35,6 +79,47 @@ provider_to_query_func = {
 }
 
 
+def query_with_usage(
+    system_message: PromptType | None,
+    user_message: PromptType | None,
+    model: str,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    func_spec: FunctionSpec | None = None,
+    *,
+    call_type: str | None = None,
+    **model_kwargs,
+) -> tuple[OutputType, dict[str, Any]]:
+    """
+    Like query(), but also returns per-call token usage and updates the global accumulator.
+    """
+    model_kwargs = model_kwargs | {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    provider = determine_provider(model)
+    query_func = provider_to_query_func[provider]
+    output, req_time, in_tok_count, out_tok_count, info = query_func(
+        system_message=compile_prompt_to_md(system_message) if system_message else None,
+        user_message=compile_prompt_to_md(user_message) if user_message else None,
+        func_spec=func_spec,
+        **model_kwargs,
+    )
+
+    usage = {
+        "model": info.get("model", model),
+        "in": in_tok_count,
+        "out": out_tok_count,
+        "total": in_tok_count + out_tok_count,
+        "req_time": req_time,
+        "call_type": call_type,
+    }
+    _record_usage(usage)
+    return output, usage
+
+
 def query(
     system_message: PromptType | None,
     user_message: PromptType | None,
@@ -59,20 +144,13 @@ def query(
     Returns:
         OutputType: A string completion if func_spec is None, otherwise a dict with the function call details.
     """
-
-    model_kwargs = model_kwargs | {
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-
-    provider = determine_provider(model)
-    query_func = provider_to_query_func[provider]
-    output, req_time, in_tok_count, out_tok_count, info = query_func(
-        system_message=compile_prompt_to_md(system_message) if system_message else None,
-        user_message=compile_prompt_to_md(user_message) if user_message else None,
+    output, _usage = query_with_usage(
+        system_message=system_message,
+        user_message=user_message,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
         func_spec=func_spec,
         **model_kwargs,
     )
-
     return output

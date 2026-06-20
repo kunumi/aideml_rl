@@ -1,18 +1,63 @@
 # Supervised fine-tuning for the AIDE hindsight controller (action + hint JSON).
-#
-# Many OpenRLHF versions expose `openrlhf.cli.train_sft` with slightly different flags.
-# Adjust keys below to match your installed OpenRLHF version.
+# Reference config for OpenRLHF namespaced CLI flags (see scripts/openrlhf/train_hint_sft.sh).
 
-pretrain: Qwen/Qwen3-4B-Thinking-2507
+model:
+  #model_name_or_path: Qwen/Qwen3-4B-Thinking-2507
+  model_name_or_path: Qwen/Qwen3.5-9B
+  gradient_checkpointing_enable: true
 
-dataset: data/heuristic_runs/hint_controller/sft.jsonl
-input_key: messages
-apply_chat_template: true
+data:
+  dataset: data/heuristic_runs/hint_controller/sft.jsonl
+  input_key: messages
+  apply_chat_template: true
+  max_len: 8192
 
-max_epochs: 1
-learning_rate: 2.0e-5
-batch_size: 1
-micro_train_batch_size: 1
-max_len: 8192
+train:
+  max_epochs: 1
+  batch_size: 16
+  micro_batch_size: 4
 
-output_dir: checkpoints/aide_hint_controller_sft
+adam:
+  lr: 2.0e-5
+
+ckpt:
+  output_dir: checkpoints/aide_hint_controller_sft
+
+ds:
+  zero_stage: 3
+
+logger:
+  logging_steps: 1
+  wandb:
+    key: true
+    project: aide_rl
+    run_name: hint_controller_sft
+
+
+
+# [-h] [--ckpt.output_dir CKPT.OUTPUT_DIR] [--ckpt.save_steps CKPT.SAVE_STEPS] [--ckpt.save_hf] [--ckpt.disable_ds]
+# [--logger.logging_steps LOGGER.LOGGING_STEPS] [--eval.steps EVAL.STEPS] [--ckpt.path CKPT.PATH]
+# [--ckpt.max_num CKPT.MAX_NUM] [--ckpt.max_mem CKPT.MAX_MEM] [--ckpt.load_enable] [--ds.use_universal_ckpt]
+# [--train.micro_batch_size TRAIN.MICRO_BATCH_SIZE] [--train.batch_size TRAIN.BATCH_SIZE]
+# [--model.gradient_checkpointing_enable] [--ds.deepcompile] [--train.seed TRAIN.SEED] [--train.full_determinism_enable]
+# [--local_rank LOCAL_RANK] [--ds.zero_stage DS.ZERO_STAGE] [--ds.param_dtype {bf16,fp16}] [--ds.zpg DS.ZPG]
+# [--ds.adam_offload] [--ds.attn_implementation DS.ATTN_IMPLEMENTATION]
+# [--ds.experts_implementation {eager,batched_mm,grouped_mm,deepgemm}] [--ds.use_liger_kernel]
+# [--ds.grad_accum_dtype DS.GRAD_ACCUM_DTYPE] [--ds.overlap_comm] [--model.gradient_checkpointing_reentrant]
+# [--data.disable_fast_tokenizer] [--data.dataloader_num_workers DATA.DATALOADER_NUM_WORKERS]
+# [--ds.tensor_parallel_size DS.TENSOR_PARALLEL_SIZE] [--train.max_epochs TRAIN.MAX_EPOCHS]
+# [--model.aux_loss_coef MODEL.AUX_LOSS_COEF] [--model.model_name_or_path MODEL.MODEL_NAME_OR_PATH]
+# [--model.pretrain_mode_enable] [--optim {adam,muon}] [--muon.lr MUON.LR] [--muon.momentum MUON.MOMENTUM]
+# [--muon.ns_steps MUON.NS_STEPS] [--muon.nesterov] [--muon.no_nesterov] [--adam.lr ADAM.LR]
+# [--adam.betas ADAM.BETAS ADAM.BETAS] [--adam.eps ADAM.EPS] [--adam.weight_decay ADAM.WEIGHT_DECAY]
+# [--lr_scheduler LR_SCHEDULER] [--lr_warmup_ratio LR_WARMUP_RATIO] [--min_lr_ratio MIN_LR_RATIO] [--max_norm MAX_NORM]
+# [--ds.ring_attn_size DS.RING_ATTN_SIZE] [--ds.ring_attn_head_stride DS.RING_ATTN_HEAD_STRIDE] [--ds.load_in_4bit]
+# [--ds.lora.rank DS.LORA.RANK] [--ds.lora.alpha DS.LORA.ALPHA] [--ds.lora.target_modules [DS.LORA.TARGET_MODULES ...]]
+# [--ds.lora.dropout DS.LORA.DROPOUT] [--ds.packing_samples] [--data.dataset DATA.DATASET]
+# [--data.dataset_probs DATA.DATASET_PROBS] [--eval.dataset EVAL.DATASET] [--data.dataset_split DATA.DATASET_SPLIT]
+# [--eval.split EVAL.SPLIT] [--data.max_samples DATA.MAX_SAMPLES] [--data.multiturn] [--data.input_key DATA.INPUT_KEY]
+# [--data.output_key DATA.OUTPUT_KEY] [--data.input_template DATA.INPUT_TEMPLATE] [--data.apply_chat_template]
+# [--data.tokenizer_chat_template DATA.TOKENIZER_CHAT_TEMPLATE] [--data.max_len DATA.MAX_LEN]
+# [--logger.wandb.key LOGGER.WANDB.KEY] [--logger.wandb.org LOGGER.WANDB.ORG] [--logger.wandb.group LOGGER.WANDB.GROUP]
+# [--logger.wandb.project LOGGER.WANDB.PROJECT] [--logger.wandb.run_name LOGGER.WANDB.RUN_NAME]
+# [--logger.tensorboard_dir LOGGER.TENSORBOARD_DIR] [--use_ms]

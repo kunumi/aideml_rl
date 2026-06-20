@@ -47,6 +47,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_hint_chars", type=int, default=600)
     p.add_argument("--min_preference_gap", type=float, default=0.01)
     p.add_argument(
+        "--min_preference_gap_frac",
+        type=float,
+        default=0.005,
+        help="Minimum relative gap (gap / |baseline|) when absolute gap is below min_preference_gap.",
+    )
+    p.add_argument(
+        "--max_pairs_per_node",
+        type=int,
+        default=3,
+        help="Max preference pairs to emit per branching node or draft set.",
+    )
+    p.add_argument(
         "--holdout_datasets",
         type=str,
         nargs="*",
@@ -66,6 +78,8 @@ def main() -> None:
         teacher_model=args.teacher_model,
         max_hint_chars=args.max_hint_chars,
         min_preference_gap=args.min_preference_gap,
+        min_preference_gap_frac=args.min_preference_gap_frac,
+        max_pairs_per_node=args.max_pairs_per_node,
         holdout_datasets=set(args.holdout_datasets),
     )
     counts = export_logs_dir(

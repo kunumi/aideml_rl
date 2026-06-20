@@ -174,3 +174,6 @@ data/heuristic_runs/
 data/kaggle_materialized/
 data/kaggle_raw/
 data/openrlhf_smoke/
+
+checkpoints/
+wandb/

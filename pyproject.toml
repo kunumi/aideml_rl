@@ -26,6 +26,11 @@ hf = [
 gcs = [
     "google-cloud-storage",
 ]
+eval = [
+    "matplotlib",
+    "relbench",
+    "pyarrow",
+]
 rlhf = [
     "openrlhf",
     "ray",

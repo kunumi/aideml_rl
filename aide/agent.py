@@ -3,7 +3,7 @@ import random
 from typing import Any, Callable, cast
 
 import humanize
-from .backend import FunctionSpec, query
+from .backend import FunctionSpec, query_with_usage
 from .interpreter import ExecutionResult
 from .journal import Journal, Node
 from .policy import HeuristicPolicy, SearchAction, SearchPolicy
@@ -133,15 +133,17 @@ class Agent:
             )
         }
 
-    def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str]:
+    def plan_and_code_query(self, prompt, retries=3) -> tuple[str, str, dict]:
         """Generate a natural language plan + code in the same LLM call and split them apart."""
         completion_text = None
+        code_usage: dict = {}
         for _ in range(retries):
-            completion_text = query(
+            completion_text, code_usage = query_with_usage(
                 system_message=prompt,
                 user_message=None,
                 model=self.acfg.code.model,
                 temperature=self.acfg.code.temp,
+                call_type="code",
             )
 
             code = extract_code(completion_text)
@@ -149,11 +151,11 @@ class Agent:
 
             if code and nl_text:
                 # merge all code blocks into a single string
-                return nl_text, code
+                return nl_text, code, code_usage
 
             print("Plan + code extraction failed, retrying...")
         print("Final plan + code extraction attempt failed, giving up...")
-        return "", completion_text  # type: ignore
+        return "", completion_text or "", code_usage  # type: ignore
 
     def _draft(self) -> Node:
         prompt: Any = {
@@ -184,8 +186,8 @@ class Agent:
         if self.acfg.data_preview:
             prompt["Data Overview"] = self.data_preview
 
-        plan, code = self.plan_and_code_query(prompt)
-        return Node(plan=plan, code=code)
+        plan, code, code_usage = self.plan_and_code_query(prompt)
+        return Node(plan=plan, code=code, token_usage={"code": code_usage})
 
     def _controller_hint_block(self, hint: str | None) -> dict[str, str] | None:
         if not hint:
@@ -230,12 +232,13 @@ class Agent:
         }
         prompt["Instructions"] |= self._prompt_impl_guideline
 
-        plan, code = self.plan_and_code_query(prompt)
+        plan, code, code_usage = self.plan_and_code_query(prompt)
         return Node(
             plan=plan,
             code=code,
             parent=parent_node,
             hint=hint,
+            token_usage={"code": code_usage},
         )
 
     def _debug(self, parent_node: Node, hint: str | None = None) -> Node:
@@ -266,8 +269,14 @@ class Agent:
         if self.acfg.data_preview:
             prompt["Data Overview"] = self.data_preview
 
-        plan, code = self.plan_and_code_query(prompt)
-        return Node(plan=plan, code=code, parent=parent_node, hint=hint)
+        plan, code, code_usage = self.plan_and_code_query(prompt)
+        return Node(
+            plan=plan,
+            code=code,
+            parent=parent_node,
+            hint=hint,
+            token_usage={"code": code_usage},
+        )
 
     def update_data_preview(
         self,
@@ -323,16 +332,19 @@ class Agent:
             "Execution output": wrap_code(node.term_out, lang=""),
         }
 
-        response = cast(
-            dict,
-            query(
-                system_message=prompt,
-                user_message=None,
-                func_spec=review_func_spec,
-                model=self.acfg.feedback.model,
-                temperature=self.acfg.feedback.temp,
-            ),
+        response, review_usage = query_with_usage(
+            system_message=prompt,
+            user_message=None,
+            func_spec=review_func_spec,
+            model=self.acfg.feedback.model,
+            temperature=self.acfg.feedback.temp,
+            call_type="review",
         )
+        response = cast(dict, response)
+
+        if node.token_usage is None:
+            node.token_usage = {}
+        node.token_usage["review"] = review_usage
 
         # if the metric isn't a float then fill the metric with the worst metric
         if not isinstance(response["metric"], float):

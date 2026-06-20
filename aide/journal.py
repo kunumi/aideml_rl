@@ -51,6 +51,9 @@ class Node(DataClassJsonMixin):
     # controller hint used when generating this node (if any)
     hint: str | None = field(default=None, kw_only=True)
 
+    # per-node LLM token usage: {"code": {"in", "out", "total", ...}, "review": {...}}
+    token_usage: dict | None = field(default=None, kw_only=True)
+
     def __post_init__(self) -> None:
         if self.parent is not None:
             self.parent.children.add(self)
@@ -103,6 +106,17 @@ class Node(DataClassJsonMixin):
             return 0
         return self.parent.debug_depth + 1  # type: ignore
 
+    @property
+    def total_tokens(self) -> int:
+        """Sum of input + output tokens for all LLM calls on this node."""
+        if not self.token_usage:
+            return 0
+        total = 0
+        for part in self.token_usage.values():
+            if isinstance(part, dict):
+                total += int(part.get("total", part.get("in", 0) + part.get("out", 0)))
+        return total
+
     def summary_dict(self) -> dict:
         return {
             "id": self.id,
@@ -113,6 +127,7 @@ class Node(DataClassJsonMixin):
             "debug_depth": self.debug_depth,
             "is_leaf": self.is_leaf,
             "plan_excerpt": (self.plan or "")[:200],
+            "total_tokens": self.total_tokens,
         }
 
 
@@ -209,3 +224,8 @@ class Journal(DataClassJsonMixin):
     def summary_for_policy(self, max_nodes: int = 32) -> list[dict]:
         nodes = self.nodes[-max_nodes:]
         return [n.summary_dict() for n in nodes]
+
+    @property
+    def total_tokens(self) -> int:
+        """Sum of per-node LLM token usage across the journal."""
+        return sum(n.total_tokens for n in self.nodes)

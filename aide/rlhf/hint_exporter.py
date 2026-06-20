@@ -20,7 +20,7 @@ from ..backend import query
 from ..journal import Journal, Node
 from ..utils import serialize
 from ..utils.config import SearchConfig
-from .ctu_dataset import CTUTask, load_ctu_index
+from .ctu_dataset import CTUTask, _split_name, load_ctu_index
 from .evaluator import extract_baseline
 from .hint_prompt import (
     HINT_PROMPT_VERSION,
@@ -61,6 +61,8 @@ class ExportConfig:
     max_code_chars: int = 8000
     max_output_chars: int = 4000
     min_preference_gap: float = 0.01
+    min_preference_gap_frac: float = 0.005
+    max_pairs_per_node: int = 3
     holdout_datasets: set[str] = field(default_factory=set)
 
 
@@ -342,6 +344,209 @@ def build_target_hint(
     return abandon_hint_template(node), "fallback_template"
 
 
+def _infer_maximize_from_journal(journal: Journal) -> bool:
+    for node in journal.nodes:
+        if _is_valid_node(node) and node.metric.maximize is not None:  # type: ignore[union-attr]
+            return bool(node.metric.maximize)
+    return True
+
+
+def _infer_task_type_from_eval(eval_text: str | None) -> str:
+    if not eval_text:
+        return "unknown"
+    ev = eval_text.lower()
+    if any(k in ev for k in ("f1", "accuracy", "auc", "precision", "recall")):
+        if "binary" in ev:
+            return "binary_classification"
+        return "multiclass_classification"
+    if any(k in ev for k in ("mae", "rmse", "mse", "mape", "log loss", "logloss")):
+        return "regression"
+    return "unknown"
+
+
+def _journal_baseline(journal: Journal) -> float:
+    best = journal.get_best_node(only_good=True)
+    if best is not None and best.metric is not None and best.metric.value is not None:
+        return abs(float(best.metric.value))
+    return 1.0
+
+
+def _build_fallback_task(
+    task_guess: str,
+    *,
+    goal: str | None,
+    eval_text: str | None,
+    journal: Journal,
+) -> CTUTask:
+    dataset_name, task_name = _split_name(task_guess)
+    task_type = _infer_task_type_from_eval(eval_text)
+    target_column = ""
+    if goal:
+        match = re.search(r"`([^`]+)`", goal)
+        if match:
+            target_column = match.group(1)
+    baseline = _journal_baseline(journal)
+    info: dict[str, Any] = {"val_metric": baseline}
+    if task_type == "regression":
+        info["val_mae"] = baseline
+    elif task_type in {"binary_classification", "multiclass_classification"}:
+        info["val_macro_f1"] = baseline
+    description = goal or ""
+    return CTUTask(
+        row_name=task_guess,
+        dataset_name=dataset_name,
+        task_name=task_name,
+        task_type=task_type,
+        target_column=target_column,
+        target_table="",
+        description=description,
+        info=info,
+        baseline_metrics={k: float(v) for k, v in info.items() if isinstance(v, (int, float))},
+    )
+
+
+def _resolve_task_and_metrics(
+    journal_path: Path,
+    dirname: str,
+    task_guess: str,
+    ctu_tasks_by_name: dict[str, CTUTask],
+    journal: Journal,
+) -> tuple[CTUTask, str | dict, float, bool]:
+    task = ctu_tasks_by_name.get(task_guess)
+    if task is None:
+        for name, candidate in ctu_tasks_by_name.items():
+            if name in dirname or dirname.endswith(name):
+                task = candidate
+                break
+
+    cfg_path = journal_path.parent / "config.yaml"
+    run_cfg = OmegaConf.load(cfg_path) if cfg_path.is_file() else None
+    goal = run_cfg.get("goal") if run_cfg else None
+    eval_text = run_cfg.get("eval") if run_cfg else None
+
+    if task is None:
+        task = _build_fallback_task(
+            task_guess,
+            goal=goal,
+            eval_text=eval_text,
+            journal=journal,
+        )
+        maximize = _infer_maximize_from_journal(journal)
+        baseline = _journal_baseline(journal)
+    else:
+        baseline, maximize = extract_baseline(task.info, task.task_type)
+        journal_max = _infer_maximize_from_journal(journal)
+        if journal.nodes and any(_is_valid_node(n) for n in journal.nodes):
+            maximize = journal_max
+
+    task_desc: str | dict = task.description
+    if goal:
+        td: dict[str, str] = {"Task goal": goal}
+        if eval_text:
+            td["Task evaluation"] = eval_text
+        task_desc = td
+
+    return task, task_desc, baseline, maximize
+
+
+def _passes_preference_gap(gap: float, baseline: float, cfg: ExportConfig) -> bool:
+    if gap >= cfg.min_preference_gap:
+        return True
+    denom = max(abs(baseline), 1e-8)
+    return (gap / denom) >= cfg.min_preference_gap_frac
+
+
+def _rank_sibling_pairs(
+    scored_valid: list[tuple[Node, float]],
+    *,
+    maximize: bool,
+) -> list[tuple[Node, float, Node, float, float]]:
+    pairs: list[tuple[Node, float, Node, float, float]] = []
+    n = len(scored_valid)
+    for i in range(n):
+        ch_i, m_i = scored_valid[i]
+        for j in range(i + 1, n):
+            ch_j, m_j = scored_valid[j]
+            if maximize:
+                if m_i >= m_j:
+                    best_ch, best_m, worst_ch, worst_m = ch_i, m_i, ch_j, m_j
+                else:
+                    best_ch, best_m, worst_ch, worst_m = ch_j, m_j, ch_i, m_i
+            else:
+                if m_i <= m_j:
+                    best_ch, best_m, worst_ch, worst_m = ch_i, m_i, ch_j, m_j
+                else:
+                    best_ch, best_m, worst_ch, worst_m = ch_j, m_j, ch_i, m_i
+            gap = abs(best_m - worst_m)
+            pairs.append((best_ch, best_m, worst_ch, worst_m, gap))
+    pairs.sort(key=lambda item: item[4], reverse=True)
+    return pairs
+
+
+def _append_child_subtree_gap_rows(
+    rows: list[dict[str, Any]],
+    *,
+    node: Node,
+    user_input: str,
+    scored_valid: list[tuple[Node, float]],
+    task: CTUTask,
+    seed: int | None,
+    log_dir: str,
+    cfg: ExportConfig,
+    maximize: bool,
+    baseline: float,
+    preference_type: str,
+) -> None:
+    taken = 0
+    for best_ch, best_m, worst_ch, worst_m, gap in _rank_sibling_pairs(
+        scored_valid, maximize=maximize
+    ):
+        if taken >= cfg.max_pairs_per_node:
+            break
+        if not _passes_preference_gap(gap, baseline, cfg):
+            continue
+        best_action = infer_hindsight_action(node, best_ch, horizon=1, maximize=maximize)
+        worst_action = infer_hindsight_action(node, worst_ch, horizon=1, maximize=maximize)
+        best_hint, _ = build_target_hint(
+            node, best_ch, best_action, cfg=cfg, maximize=maximize
+        )
+        worst_hint, _ = build_target_hint(
+            node, worst_ch, worst_action, cfg=cfg, maximize=maximize
+        )
+        if not best_hint or not worst_hint or best_hint == worst_hint:
+            continue
+        rows.append(
+            {
+                "task_id": task.row_name,
+                "run_id": Path(log_dir).name,
+                "node_id": node.id,
+                "prompt": user_input,
+                "chosen": format_controller_target(
+                    best_action,
+                    best_hint,
+                    _confidence_from_delta(gap, baseline, best_action),
+                    max_hint_chars=cfg.max_hint_chars,
+                ),
+                "rejected": format_controller_target(
+                    worst_action,
+                    worst_hint,
+                    _confidence_from_delta(0.0, baseline, worst_action),
+                    max_hint_chars=cfg.max_hint_chars,
+                ),
+                "chosen_future_node_id": best_ch.id,
+                "rejected_future_node_id": worst_ch.id,
+                "chosen_metric": best_m,
+                "rejected_metric": worst_m,
+                "metadata": {
+                    "preference_type": preference_type,
+                    "prompt_version": HINT_PROMPT_VERSION,
+                    "seed": seed,
+                },
+            }
+        )
+        taken += 1
+
+
 def _task_metadata(task: CTUTask) -> dict[str, Any]:
     return {
         "task_type": task.task_type,
@@ -501,52 +706,19 @@ def build_preference_rows(
             scored.append((ch, _child_subtree_metric(ch, maximize)))
         scored_valid = [(ch, m) for ch, m in scored if m is not None]
         if len(scored_valid) >= 2:
-            if maximize:
-                best_ch, best_m = max(scored_valid, key=lambda x: x[1])  # type: ignore[arg-type]
-                worst_ch, worst_m = min(scored_valid, key=lambda x: x[1])  # type: ignore[arg-type]
-            else:
-                best_ch, best_m = min(scored_valid, key=lambda x: x[1])  # type: ignore[arg-type]
-                worst_ch, worst_m = max(scored_valid, key=lambda x: x[1])  # type: ignore[arg-type]
-            gap = abs(float(best_m) - float(worst_m))  # type: ignore[arg-type]
-            if gap >= cfg.min_preference_gap:
-                best_action = infer_hindsight_action(node, best_ch, horizon=1, maximize=maximize)
-                worst_action = infer_hindsight_action(node, worst_ch, horizon=1, maximize=maximize)
-                best_hint, _ = build_target_hint(
-                    node, best_ch, best_action, cfg=cfg, maximize=maximize
-                )
-                worst_hint, _ = build_target_hint(
-                    node, worst_ch, worst_action, cfg=cfg, maximize=maximize
-                )
-                if best_hint and worst_hint and best_hint != worst_hint:
-                    rows.append(
-                        {
-                            "task_id": task.row_name,
-                            "run_id": Path(log_dir).name,
-                            "node_id": node.id,
-                            "prompt": user_input,
-                            "chosen": format_controller_target(
-                                best_action,
-                                best_hint,
-                                _confidence_from_delta(gap, baseline, best_action),
-                                max_hint_chars=cfg.max_hint_chars,
-                            ),
-                            "rejected": format_controller_target(
-                                worst_action,
-                                worst_hint,
-                                _confidence_from_delta(0.0, baseline, worst_action),
-                                max_hint_chars=cfg.max_hint_chars,
-                            ),
-                            "chosen_future_node_id": best_ch.id,
-                            "rejected_future_node_id": worst_ch.id,
-                            "chosen_metric": best_m,
-                            "rejected_metric": worst_m,
-                            "metadata": {
-                                "preference_type": "child_subtree_gap",
-                                "prompt_version": HINT_PROMPT_VERSION,
-                                "seed": seed,
-                            },
-                        }
-                    )
+            _append_child_subtree_gap_rows(
+                rows,
+                node=node,
+                user_input=user_input,
+                scored_valid=scored_valid,  # type: ignore[arg-type]
+                task=task,
+                seed=seed,
+                log_dir=log_dir,
+                cfg=cfg,
+                maximize=maximize,
+                baseline=baseline,
+                preference_type="child_subtree_gap",
+            )
 
     # Action-level contrast for buggy nodes: debug vs abandon
     if node.is_buggy:
@@ -617,6 +789,142 @@ def build_preference_rows(
                     }
                 )
 
+    elif _is_valid_node(node):
+        future = select_future_node(
+            node, strategy=cfg.future_strategy, horizon=cfg.horizon, maximize=maximize
+        )
+        if future is not None and _has_improving_descendant(
+            node, cfg.horizon, maximize
+        ):
+            improve_hint, _ = build_target_hint(
+                node, future, "improve", cfg=cfg, maximize=maximize
+            )
+            abandon_hint = abandon_hint_template(node)
+            if improve_hint and improve_hint != abandon_hint:
+                cur = _metric_value(node)
+                fut = _metric_value(future)
+                delta = None
+                if cur is not None and fut is not None:
+                    raw = fut - cur
+                    delta = raw if maximize else -raw
+                rows.append(
+                    {
+                        "task_id": task.row_name,
+                        "run_id": Path(log_dir).name,
+                        "node_id": node.id,
+                        "prompt": user_input,
+                        "chosen": format_controller_target(
+                            "improve",
+                            improve_hint,
+                            _confidence_from_delta(delta, baseline, "improve"),
+                            max_hint_chars=cfg.max_hint_chars,
+                        ),
+                        "rejected": format_controller_target(
+                            "abandon",
+                            abandon_hint,
+                            0.0,
+                            max_hint_chars=cfg.max_hint_chars,
+                        ),
+                        "chosen_future_node_id": future.id,
+                        "rejected_future_node_id": None,
+                        "chosen_metric": fut,
+                        "rejected_metric": cur,
+                        "metadata": {
+                            "preference_type": "improve_vs_abandon",
+                            "prompt_version": HINT_PROMPT_VERSION,
+                            "seed": seed,
+                        },
+                    }
+                )
+
+    return rows
+
+
+def build_draft_preference_rows(
+    journal: Journal,
+    *,
+    task: CTUTask,
+    task_desc: str,
+    seed: int | None,
+    log_dir: str,
+    cfg: ExportConfig,
+    maximize: bool,
+    baseline: float,
+) -> list[dict[str, Any]]:
+    """Compare initial draft roots by subtree-best metric (top-k pairs per run)."""
+    drafts = journal.draft_nodes
+    if len(drafts) < 2:
+        return []
+
+    scored_valid: list[tuple[Node, float]] = []
+    for draft in drafts:
+        metric = _child_subtree_metric(draft, maximize)
+        if metric is not None:
+            scored_valid.append((draft, metric))
+    if len(scored_valid) < 2:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    taken = 0
+    for best_ch, best_m, worst_ch, worst_m, gap in _rank_sibling_pairs(
+        scored_valid, maximize=maximize
+    ):
+        if taken >= cfg.max_pairs_per_node:
+            break
+        if not _passes_preference_gap(gap, baseline, cfg):
+            continue
+        user_input = format_controller_input(
+            task_desc,
+            worst_ch,
+            history_summary=build_history_summary(worst_ch),
+            dataset_metadata=_task_metadata(task),
+            max_code_chars=cfg.max_code_chars,
+            max_output_chars=cfg.max_output_chars,
+        )
+        best_action = infer_hindsight_action(
+            worst_ch, best_ch, horizon=1, maximize=maximize
+        )
+        worst_action = infer_hindsight_action(
+            worst_ch, worst_ch, horizon=1, maximize=maximize
+        )
+        best_hint, _ = build_target_hint(
+            worst_ch, best_ch, best_action, cfg=cfg, maximize=maximize
+        )
+        worst_hint, _ = build_target_hint(
+            worst_ch, worst_ch, worst_action, cfg=cfg, maximize=maximize
+        )
+        if not best_hint or not worst_hint or best_hint == worst_hint:
+            continue
+        rows.append(
+            {
+                "task_id": task.row_name,
+                "run_id": Path(log_dir).name,
+                "node_id": worst_ch.id,
+                "prompt": user_input,
+                "chosen": format_controller_target(
+                    best_action,
+                    best_hint,
+                    _confidence_from_delta(gap, baseline, best_action),
+                    max_hint_chars=cfg.max_hint_chars,
+                ),
+                "rejected": format_controller_target(
+                    worst_action,
+                    worst_hint,
+                    _confidence_from_delta(0.0, baseline, worst_action),
+                    max_hint_chars=cfg.max_hint_chars,
+                ),
+                "chosen_future_node_id": best_ch.id,
+                "rejected_future_node_id": worst_ch.id,
+                "chosen_metric": best_m,
+                "rejected_metric": worst_m,
+                "metadata": {
+                    "preference_type": "draft_gap",
+                    "prompt_version": HINT_PROMPT_VERSION,
+                    "seed": seed,
+                },
+            }
+        )
+        taken += 1
     return rows
 
 
@@ -631,29 +939,10 @@ def export_journal_file(
     dirname = journal_path.parent.name
     task_guess, seed = _parse_run_dirname(dirname)
 
-    task = ctu_tasks_by_name.get(task_guess)
-    if task is None:
-        for name, t in ctu_tasks_by_name.items():
-            if name in dirname or dirname.endswith(name):
-                task = t
-                break
-    if task is None:
-        raise KeyError(
-            f"Could not map log dir '{dirname}' to a CTU task row."
-        )
-
-    task_desc: str | dict = task.description
-    cfg_path = journal_path.parent / "config.yaml"
-    if cfg_path.is_file():
-        run_cfg = OmegaConf.load(cfg_path)
-        if run_cfg.get("goal"):
-            td = {"Task goal": run_cfg.goal}
-            if run_cfg.get("eval"):
-                td["Task evaluation"] = run_cfg.eval
-            task_desc = td
-
+    task, task_desc, baseline, maximize = _resolve_task_and_metrics(
+        journal_path, dirname, task_guess, ctu_tasks_by_name, journal
+    )
     td_str = task_desc_to_string(task_desc)
-    baseline, maximize = extract_baseline(task.info, task.task_type)
     stats = compute_subtree_stats(journal, maximize)
 
     sft_rows: list[dict[str, Any]] = []
@@ -688,7 +977,37 @@ def export_journal_file(
             )
         )
 
+    pref_rows.extend(
+        build_draft_preference_rows(
+            journal,
+            task=task,
+            task_desc=td_str,
+            seed=seed,
+            log_dir=log_dir,
+            cfg=cfg,
+            maximize=maximize,
+            baseline=baseline,
+        )
+    )
+
     return sft_rows, pref_rows
+
+
+def _chatify_preference_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Convert string prompt/chosen/rejected into chat-message lists.
+
+    OpenRLHF's reward/DPO dataset with ``apply_chat_template`` expects each of
+    ``prompt``/``chosen``/``rejected`` to be a list of role/content messages so
+    that ``prompt + chosen`` renders a full conversation.
+    """
+    row = dict(row)
+    row["prompt"] = [
+        {"role": "system", "content": HINT_SYSTEM_PROMPT},
+        {"role": "user", "content": row["prompt"]},
+    ]
+    row["chosen"] = [{"role": "assistant", "content": row["chosen"]}]
+    row["rejected"] = [{"role": "assistant", "content": row["rejected"]}]
+    return row
 
 
 def export_logs_dir(
@@ -746,7 +1065,7 @@ def export_logs_dir(
                     counts["sft"] += 1
 
             for row in pref_rows:
-                f_pref.write(json.dumps(row) + "\n")
+                f_pref.write(json.dumps(_chatify_preference_row(row)) + "\n")
                 counts["preferences"] += 1
 
     return counts
