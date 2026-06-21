@@ -12,7 +12,7 @@ params:
   benchmark:
     value: relbench
   steps:
-    value: 20
+    value: 35
   seed:
     value: 0
   model_tag:
